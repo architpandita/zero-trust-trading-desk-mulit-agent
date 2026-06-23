@@ -1,0 +1,45 @@
+# ==============================================================================
+# TRADING AGENT HARNESS - ZERO-TRUST POLICY CONFIGURATION
+# ==============================================================================
+version: "1.0.0"
+environment: "sandbox" # Forces Mock Broker usage; protects production API keys
+
+global_risk_mandate:
+  max_portfolio_exposure_usd: 10000.00
+  max_single_trade_value_usd: 2500.00
+  max_daily_drawdown_percent: 2.5
+  halt_trading_on_drawdown: true
+
+asset_universe:
+  allowed_tickers:
+    - "AAPL"
+    - "MSFT"
+    - "SPY"
+    - "QQQ"
+  restricted_asset_classes:
+    - "CRYPTO"
+    - "PENNY_STOCKS"
+    - "OPTIONS"
+
+agent_permissions:
+  fundamental_agent:
+    role: "analysis"
+    execution_auth: false
+    allowed_tools: ["fetch_financial_statements", "fetch_news_sentiment"]
+  technical_agent:
+    role: "analysis"
+    execution_auth: false
+    allowed_tools: ["fetch_historical_prices", "calculate_moving_averages"]
+  execution_agent:
+    role: "orchestration_and_proposal"
+    execution_auth: true
+    allowed_tools: ["format_trade_proposal_json"]
+
+human_in_the_loop_triggers:
+  require_hitl_if_trade_value_exceeds: 1000.00
+  require_hitl_if_sentiment_conflict: true
+  require_hitl_on_first_trade_of_day: true
+
+context_hygiene:
+  mask_account_balance: true
+  mask_api_keys: true

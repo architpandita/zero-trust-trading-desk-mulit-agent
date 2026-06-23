@@ -1,0 +1,29 @@
+[
+  {
+    "timestamp": "2026-06-23T07:25:55.502208Z",
+    "ticker": "QQQ",
+    "action": "BUY",
+    "quantity": 2,
+    "price": 400.0,
+    "total_value": 800.0,
+    "remaining_cash": 9200.0,
+    "positions": {
+      "QQQ": 2
+    },
+    "message": "SUCCESS: Bought 2 shares of QQQ at $400.00/share for total of $800.00."
+  },
+  {
+    "timestamp": "2026-06-23T07:25:59.180429Z",
+    "ticker": "AAPL",
+    "action": "BUY",
+    "quantity": 10,
+    "price": 180.0,
+    "total_value": 1800.0,
+    "remaining_cash": 7400.0,
+    "positions": {
+      "QQQ": 2,
+      "AAPL": 10
+    },
+    "message": "SUCCESS: Bought 10 shares of AAPL at $180.00/share for total of $1,800.00."
+  }
+]

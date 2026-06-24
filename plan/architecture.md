@@ -1,4 +1,5 @@
 # ARCHITECTURE_E2E.md: End-to-End System Architecture Specification
+# todo update the architure for mointering and feedback for agent performece n improvement
 
 ## 1. Executive Summary & Core Use Cases
 This document details the production-grade end-to-end (E2E) architecture for the **Zero-Trust Multi-Agent Trading Desk**. The framework resolves the structural vulnerability of **Ambient Authority** in autonomous financial systems by handling AI agents as untrusted software entities. All data gathering, state synchronization, and execution commands pass through explicit, deterministic verification frameworks.

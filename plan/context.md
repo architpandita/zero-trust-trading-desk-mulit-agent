@@ -2,11 +2,11 @@ This file serves as your **Project Charter**. Keeping this as a `CONTEXT.md` in 
 
 ---
 
-# CONTEXT.md: Trading Agent Harness (Zero-Trust Framework)
+# CONTEXT.md: zero trust mulit agent trading-desk 
 
 ## 1. Project Overview
 
-The **Trading Agent Harness** is a production-grade, multi-agent framework designed to govern autonomous financial agents. It shifts the paradigm from "experimental trading" to "auditable, governed financial operations."
+The **zero trust mulit agent trading-desk* is a production-grade, multi-agent framework designed to govern autonomous financial agents. It shifts the paradigm from "experimental trading" to "auditable, governed financial operations."
 
 ## 2. Why This Project? (The "Winning" Narrative)
 

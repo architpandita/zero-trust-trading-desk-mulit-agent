@@ -1,0 +1,58 @@
+# ==============================================================================
+# ZERO-TRUST TRADING DESK — POLICY CONFIGURATION
+# Version: 2.0.0 | Environment: sandbox
+# All values are enforced programmatically. LLMs do not evaluate these rules.
+# ==============================================================================
+version: "2.0.0"
+environment: "sandbox"
+
+global_risk_mandate:
+  max_portfolio_exposure_usd: 10000.00
+  max_single_trade_value_usd: 2500.00
+  max_daily_drawdown_percent: 2.5
+  halt_trading_on_drawdown: true
+
+asset_universe:
+  allowed_tickers:
+    - "AAPL"
+    - "MSFT"
+    - "SPY"
+    - "QQQ"
+  restricted_asset_classes:
+    - "CRYPTO"
+    - "PENNY_STOCKS"
+    - "OPTIONS"
+
+agent_permissions:
+  fundamental_agent:
+    role: "analysis"
+    execution_auth: false
+    allowed_mcp_tools:
+      - "market_data/fetch_financials"
+      - "market_data/fetch_news"
+  technical_agent:
+    role: "analysis"
+    execution_auth: false
+    allowed_mcp_tools:
+      - "market_data/fetch_candles"
+      - "market_data/calc_indicators"
+  security_agent:
+    role: "hygiene"
+    execution_auth: false
+    allowed_mcp_tools:
+      - "security/scan_buffer"
+  execution_agent:
+    role: "orchestration_and_proposal"
+    execution_auth: true
+    allowed_mcp_tools:
+      - "secure_broker/submit_order_proposal"
+
+human_in_the_loop_triggers:
+  require_hitl_if_trade_value_exceeds: 1000.00
+  require_hitl_if_sentiment_conflict: true
+  require_hitl_on_first_trade_of_day: true
+  fail_closed_on_consensus_mismatch: true
+
+context_hygiene:
+  mask_account_balance: true
+  mask_api_keys: true

@@ -1,0 +1,2 @@
+class ConsensusFailError(Exception):
+    pass

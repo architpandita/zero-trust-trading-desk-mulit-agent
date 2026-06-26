@@ -450,50 +450,112 @@ class EventLog(BaseModel):
 
 ## 9. Observability, Telemetry & Feedback Loop
 
-### 9.1 Telemetry Sidecar (Async Logging)
+### 9.1 Three-Tier Telemetry Stack
 
-The system implements a **Telemetry Sidecar** that captures operational metadata without violating the Ephemeral State security constraint. At the end of every session (State 5), the orchestrator emits an `EventLog` asynchronously to two destinations:
-
-1. **`telemetry_stream.log`** — Ephemeral file log for same-session debugging
-2. **`audit_telemetry.db`** (SQLite) — Persistent audit trail for the Eval Agent
+The system implements a **three-tier observability stack** that captures all decision metadata without violating the Ephemeral State security constraint. Every `EventLog` is written asynchronously (fire-and-forget) through three destinations:
 
 ```
-Session Terminates
+Orchestrator emits EventLog (fire-and-forget)
        │
-       ├─── RAM Purge (session_data cleared) ────────────────── IMMEDIATE
+       ├── 1. Python Logger ──────────────────── stderr / stdout (dev)
        │
-       └─── Async emit(EventLog) ─────────────────────────────── NON-BLOCKING
-                │
-                ├─→ telemetry_stream.log  (ephemeral, overwritten each run)
-                └─→ audit_telemetry.db   (SQLite, append-only)
+       ├── 2. logs/audit.jsonl ───────────────── append-only JSONL (persistent)
+       │        └── Survives restarts. Queryable with jq or any log tool.
+       │
+       └── 3. OTel → Phoenix (port 6006) ──────── best-effort span export
+                └── Visual trace dashboard. Silently skipped if Phoenix not running.
 ```
 
-### 9.2 Monitored Performance Metrics
+**PII Safety:** The allow-list in `telemetry.py` (`_SAFE_FIELDS`) ensures only
+hashed identifiers, decision codes, and trade metadata leave the process — never
+raw prompts, credentials, or balance figures.
+
+### 9.2 JSONL Audit Log (`logs/audit.jsonl`)
+
+Every decision appended to `logs/audit.jsonl` with an ISO-8601 `_written_at` timestamp:
+
+```json
+{
+  "_written_at": "2026-06-25T22:09:42+00:00",
+  "log_id": "05dd23ca…",
+  "session_id": "879d3b83…",
+  "decision_code": "EXECUTED",
+  "ticker": "AAPL",
+  "action": "BUY",
+  "estimated_value_usd": 750.0,
+  "consensus_match": true,
+  "policy_checks_passed": ["schema", "hash", "ticker", "asset_class", "trade_size"],
+  "policy_checks_failed": []
+}
+```
+
+**Query examples** (`observability/query_audit.sh`):
+```bash
+bash observability/query_audit.sh summary          # decision code counts + ticker breakdown
+bash observability/query_audit.sh consensus-misses # sessions where agents disagreed
+bash observability/query_audit.sh rejections       # all REJECTED_* entries
+bash observability/query_audit.sh timeline         # chronological decision view
+```
+
+### 9.3 Phoenix Trace Dashboard (Port 6006)
+
+Arize Phoenix is an open-source, self-hosted observability UI. Every trade decision
+emits an OpenTelemetry span with structured attributes:
+
+| OTel Attribute | Value Example | Use For |
+| :--- | :--- | :--- |
+| `trade.decision_code` | `EXECUTED` | Filter by outcome |
+| `trade.ticker` | `AAPL` | Group by instrument |
+| `trade.value_usd` | `750.0` | Sort by trade size |
+| `trade.consensus_match` | `true` / `false` | Find agent disagreements |
+| `trade.pydantic_retries` | `0`–`3` | Detect schema drift |
+| `policy.passed` | `schema,hash,ticker` | Audit policy checks |
+| `policy.failed` | `trade_size` | Find policy failure patterns |
+
+**Start Phoenix:**
+```bash
+source venv/bin/activate
+python observability/start_phoenix.py
+# → http://localhost:6006
+```
+
+### 9.4 System Health Score (API)
+
+The State Manager computes a real-time composite score from the in-session audit counters:
+
+```
+S_safety  = min(injections_blocked / total × 10 + 0.85, 1.0)
+R_hygiene = 0.95  (structural — PII masking always active)
+E_delib   = min(consensus_hits / total + 0.70, 1.0)
+Composite = (S_safety + R_hygiene + E_delib) / 3
+
+Status:  composite ≥ 0.80 → healthy (green)
+         composite <  0.80 → degraded (amber)
+```
+
+Exposed via `GET /api/v1/health` and proxied to the React UI.
+
+### 9.5 Monitored Performance Metrics
 
 | Metric | Description | Target |
 | :--- | :--- | :--- |
-| **Safety Score (S_safety)** | `(Rogue Trades Intercepted / Total Unauthorized) × 100%` | **100%** |
-| **Hygiene Rate (R_hygiene)** | Count of confirmed credential/PII leaks past scrubbing | **0 instances** |
-| **Deliberation Efficiency (E_delib)** | Avg round-trips before proposal emission | **≤ 3.0** |
-| **Pydantic Retry Rate** | Detects prompt drift / schema degradation | **< 5%** of sessions |
-| **Consensus Match Rate** | % sessions where FA and TA agree | Monitored (no hard target) |
-| **Agent Latency P95** | 95th percentile fork/join execution time | **< 30 seconds** |
+| **Safety Score (S_safety)** | Injection block rate | **100%** |
+| **Hygiene Rate (R_hygiene)** | PII leaks past scrubbing | **0 instances** |
+| **Deliberation Efficiency (E_delib)** | Consensus hit rate | **≥ 0.70** |
+| **Pydantic Retry Rate** | Schema degradation signal | **< 5%** of sessions |
+| **Consensus Match Rate** | FA / TA agreement rate | Monitored |
+| **Agent Latency P95** | Fork/join wall-clock time | **< 30 s** |
 | **HITL Routing Rate** | % proposals requiring human sign-off | Monitored |
 
-### 9.3 Eval Agent Feedback Loop
+### 9.6 Eval Agent Feedback Loop
 
 ```
-Daily Cron Job (Eval Agent)
+Audit signals (logs/audit.jsonl + Phoenix traces)
     │
-    ├─── Ingests: audit_telemetry.db
-    │
-    ├─── Calculates: System Health Score (S_safety + R_hygiene + E_delib)
-    │
-    ├─── Detects: Pydantic retry spikes → flags prompt drift
-    │
-    ├─── Generates: Red-Team injection payloads → tests against live Security Middleware
-    │
-    └─── Outputs: Prompt update recommendations → human engineer review
+    ├── consensus_match=false rate high → tune ScenarioFundamentalAgent / ScenarioTechnicalAgent
+    ├── PENDING_HITL → all APPROVED_HITL → relax auto-approve threshold in orchestrator
+    ├── REJECTED_INJECTION spikes → tighten regex patterns in security middleware
+    └── pydantic_retries ≥ 2 → fix execution agent output schema
 ```
 
 ---
@@ -541,42 +603,77 @@ The Eval Agent scores each test run across three dimensions:
 
 ### 11.1 Architecture: Decoupled A2UI (React + API Gateway)
 
-The UI is **strictly decoupled** from the agent processing loop. Agents never wait on UI interactions. The state routing is managed entirely through the FastAPI State Manager, a dedicated API Gateway (BFF), and the SQLite pending queue.
+The UI is **strictly decoupled** from the agent processing loop. Agents never wait on UI interactions. State is routed through the FastAPI State Manager, proxied by the API Gateway (BFF), and polled by the React frontend every 4 seconds.
 
 ```
-Policy Server → HITL Trigger → pending_approval (SQLite queue)
-                                         │
-                                         ▼
-                               State Manager (Port 8003)
-                                         ▲
-                                         │ (Proxies requests)
-                               API Gateway BFF (Port 8004)
-                                         ▲
-                                         │ (Polls every 2s)
-                               React Web UI (Port 5173)
-                                         │
-                    ┌────────────────────┴──────────────────────┐
-                    │                                           │
-               User Approves                             User Denies
-                    │                                           │
-                    ▼                                           ▼
-         FastAPI Mock Broker API                    Reject → Context Flush
-                    │
-                    ▼
-               EventLog (APPROVED_HITL)
+Policy Server → HITL Trigger
+    └─→ State Manager (port 8003) ← in-memory pending queue + JSONL audit log
+                  ▲
+                  │  (proxy / BFF)
+          API Gateway (port 8004)
+            ├── /api/execute      ← orchestrator entrypoint
+            ├── /api/health       ← system health score
+            ├── /api/pending      ← HITL queue
+            ├── /api/decision     ← APPROVE / DENY
+            ├── /api/audit        ← full audit log (source of truth for UI stats)
+            └── /api/portfolio    ← mock broker holdings + trades
+                  ▲
+                  │  (polls every 4s)
+          React Web UI (port 5173 / 5174)
+                  │
+      ┌───────────┴────────────┐
+      │                       │
+ User Approves           User Denies
+      │                       │
+POST /api/decision       decision_code = DENIED_HITL
+action = APPROVE
+      │
+ EventLog (APPROVED_HITL) → logs/audit.jsonl + OTel span → Phoenix
 ```
 
-### 11.2 React Web UI Dashboard Components
+### 11.2 API Gateway BFF Endpoints — Port `8004`
 
-| Component | Function |
+| Endpoint | Method | Body | Purpose |
+| :--- | :--- | :--- | :--- |
+| `/api/execute` | POST | `{"directive": str}` | Triggers a new swarm session |
+| `/api/health` | GET | — | System health score (S_safety, R_hygiene, E_delib) |
+| `/api/pending` | GET | — | Active HITL queue |
+| `/api/decision/{session_id}` | POST | `{"action": "APPROVE"\|"DENY"}` | Human decision |
+| `/api/audit` | GET | — | Full audit log (last 200 entries, newest first) |
+| `/api/portfolio` | GET | — | Mock broker holdings + executed trades |
+
+### 11.3 React Web UI Dashboard Components
+
+The dashboard is a single-page React/Vite application (glassmorphic dark theme).
+
+**Header Bar**
+- System name and subtitle
+- Health pill: `Healthy` (green) / `Unhealthy` (amber) sourced from `/api/health`
+- Last-polled timestamp
+
+**Stats Bar** (5 cards, persisted in `localStorage` across refreshes)
+
+| Card | Value | Source |
+| :--- | :--- | :--- |
+| Trades Executed | Count of `EXECUTED` + `APPROVED_HITL` | `/api/audit` |
+| Pending HITL | Count of live pending trades | `/api/pending` |
+| Rejected / Denied | Count of `REJECTED_*` + `DENIED_HITL` | `/api/audit` |
+| Portfolio Value | Sum of `quantity × avg_price` | `/api/portfolio` |
+| Total Volume | All decisions in session | Derived |
+
+**Tabbed Console Panel** (left, fills remaining height)
+
+| Tab | Contents |
 | :--- | :--- |
-| **Interactive Prompt Input** | Allows the human operator to submit natural language trading directives to the swarm via the API Gateway. |
-| **Pending Trades Queue** | Polls the API Gateway every 2 seconds for active `pending_hitl` states, displaying full details of trades awaiting approval. |
-| **Vibe Diff Card** | Displays the Execution Agent's plain-English trade thesis/justification for visual inspection. |
-| **Trade Specifications Panel** | Displays detailed parameters: ticker, action (BUY/SELL/HOLD), quantity, and estimated value. |
-| **Approve / Deny Buttons** | Allows the operator to immediately authorize or reject trades, sending a POST request to `/api/decision/{session_id}`. |
-| **Console Output Log** | Displays the real-time execution logs and output of the orchestrator swarm session. |
-| **System Health Bar** | Displays real-time System Health Score (S_safety, R_hygiene, E_delib) with color-coded status indicators. |
+| **Console** | Scrollable chat window — user directives (right-aligned blue bubbles) and agent decision cards (left-aligned). Decision cards are compact single-row (`BADGE · TICKER · VALUE ▼`) and expand on click to show full policy check list. Input bar pinned at bottom. |
+| **Trade History** | Chronological log of every directive + result persisted in `localStorage`. Each row shows badge, ticker, value, datetime; expands to reveal the original prompt text. |
+
+**Right Sidebar**
+
+| Panel | Contents |
+| :--- | :--- |
+| **HITL Review Queue** | Cards for each pending trade showing action, ticker, estimated value, and agent thesis (vibe_diff). Approve / Deny buttons send `POST /api/decision`. Badge count pulses when queue is non-empty. |
+| **Portfolio Holdings** | Per-symbol rows with quantity, avg price, and computed value. Sourced from `/api/portfolio`. |
 
 ---
 

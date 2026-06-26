@@ -20,6 +20,10 @@ policy_server = PolicyServer("config/policy_config.yaml")
 _active_sessions = {}
 _semaphore = asyncio.Semaphore(5)
 
+import os
+BROKER_MCP_URL = os.getenv("BROKER_MCP_URL", "http://localhost:8002")
+STATE_MANAGER_URL = os.getenv("STATE_MANAGER_URL", "http://localhost:8003")
+
 
 def _build_log(
     session_id: str,
@@ -105,10 +109,58 @@ async def _run_state_machine(session_id: str, directive: str) -> EventLog:
     value = proposal.estimated_value_usd
 
     try:
-        policy_result = policy_server.validate(proposal)
+        # Submit proposal to the secure broker MCP server via HTTP
+        import httpx
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{BROKER_MCP_URL}/secure_broker/submit_order_proposal",
+                    json=proposal.model_dump(),
+                    timeout=5.0
+                )
+                resp.raise_for_status()
+                res_data = resp.json()
+                decision_code = res_data.get("decision_code", "REJECTED_POLICY")
+                reason = res_data.get("reason", "")
+
+                if decision_code == "REJECTED_POLICY":
+                    raise PolicyViolationError(reason or "Policy violation")
+                elif decision_code == "REJECTED_HASH_MISMATCH":
+                    raise DataIntegrityError(reason or "Hash mismatch")
+
+                policy_result = PolicyResult(
+                    session_id=proposal.session_id,
+                    passed=(decision_code in ("EXECUTED", "PENDING_HITL")),
+                    decision_code=decision_code
+                )
+        except (httpx.RequestError, httpx.HTTPStatusError):
+            # Fall back to local validation in isolation tests/unreachable environment
+            policy_result = policy_server.validate(proposal)
 
         # Reconstruct which checks passed (for EventLog)
         passed = ["schema", "hash", "ticker", "asset_class", "trade_size"]
+
+        # Register in State Manager if PENDING_HITL
+        if policy_result.decision_code == "PENDING_HITL":
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        f"{STATE_MANAGER_URL}/api/v1/pending",
+                        json={
+                            "session_id": session_id,
+                            "proposal_summary": {
+                                "ticker": proposal.ticker,
+                                "action": proposal.action,
+                                "quantity": proposal.quantity,
+                                "estimated_value_usd": proposal.estimated_value_usd,
+                                "vibe_diff": proposal.vibe_diff,
+                            }
+                        },
+                        timeout=5.0
+                    )
+            except Exception:
+                pass
 
         # Emit to telemetry (fire-and-forget)
         try:

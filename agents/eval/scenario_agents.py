@@ -15,9 +15,18 @@ def _make_hash(payload: dict) -> str:
     ).hexdigest()
 
 
+def _get_orig_directive(session_id: str, default: str) -> str:
+    try:
+        from agents.orchestrator.orchestrator import _active_sessions
+        return _active_sessions.get(session_id, {}).get("directive", default)
+    except Exception:
+        return default
+
+
 class ScenarioFundamentalAgent:
     async def analyze(self, session_id: str, directive: str) -> AnalysisSignal:
-        directive_lower = directive.lower()
+        orig_directive = _get_orig_directive(session_id, directive)
+        directive_lower = orig_directive.lower()
         # Special directive keywords drive signal
         if "force_timeout" in directive_lower:
             await asyncio.sleep(35)
@@ -25,7 +34,7 @@ class ScenarioFundamentalAgent:
             signal = "BEARISH"
         else:
             signal = "BULLISH"
-        ticker = _extract_ticker(directive)
+        ticker = _extract_ticker(orig_directive)
         return AnalysisSignal(
             session_id=session_id,
             sender="fundamental_agent",
@@ -40,14 +49,15 @@ class ScenarioFundamentalAgent:
 
 class ScenarioTechnicalAgent:
     async def analyze(self, session_id: str, directive: str) -> AnalysisSignal:
-        directive_lower = directive.lower()
+        orig_directive = _get_orig_directive(session_id, directive)
+        directive_lower = orig_directive.lower()
         if "force_timeout" in directive_lower:
             await asyncio.sleep(35)
         if "technical: bearish" in directive_lower or "ta=bearish" in directive_lower.replace(" ", ""):
             signal = "BEARISH"
         else:
             signal = "BULLISH"
-        ticker = _extract_ticker(directive)
+        ticker = _extract_ticker(orig_directive)
         return AnalysisSignal(
             session_id=session_id,
             sender="technical_agent",
@@ -62,13 +72,14 @@ class ScenarioTechnicalAgent:
 
 class ScenarioExecutionAgent:
     async def propose(self, session_id: str, fa: AnalysisSignal, directive: str) -> TradeProposal | None:
-        directive_lower = directive.lower()
+        orig_directive = _get_orig_directive(session_id, directive)
+        directive_lower = orig_directive.lower()
         # Force schema failure scenario
         if "force_schema_failure" in directive_lower:
             return None   # Simulates retry failure — returns None 3 times
 
         ticker = fa.ticker
-        value = _extract_value(directive)
+        value = _extract_value(orig_directive)
         qty = max(1, int(value / 150))
         payload = {"ticker": ticker, "close": value / qty}
         dh = _make_hash(payload)

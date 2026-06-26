@@ -594,62 +594,129 @@ context_hygiene:
 
 ## 9. Monitoring, Telemetry & Feedback Loop
 
-### 9.1 Telemetry Sidecar Architecture
+### 9.1 Three-Tier Telemetry Stack
 
-The system captures operational metadata **without violating the Ephemeral State invariant (I-4)**. The RAM purge and the async log write happen concurrently at session end — the log write does not block the RAM purge.
+The system captures all decision metadata without violating the Ephemeral State invariant (I-4). Every `EventLog` is written asynchronously (fire-and-forget) so the RAM purge is never blocked.
 
 ```
-Session STATE 8 triggers:
-    ├── del session_data  ←──────────── IMMEDIATE (blocking)
-    └── asyncio.create_task(           NON-BLOCKING async
-            emit_event_log(log)
-        )
-            ├─→ telemetry_stream.log   (ephemeral — overwritten each full run)
-            └─→ audit_telemetry.db     (SQLite append-only)
+Orchestrator emits EventLog  (asyncio.create_task — NON-BLOCKING)
+       │
+       ├── 1. Python Logger ───────────────────── stderr / stdout (dev)
+       │
+       ├── 2. logs/audit.jsonl ──────────────── append-only JSONL (persistent)
+       │        └── Survives restarts. Queryable with jq / any log tool.
+       │
+       └── 3. OTel → Phoenix (port 6006) ─────── best-effort span export
+                └── Visual trace UI. Silently dropped if Phoenix not running.
 ```
 
-### 9.2 Performance Metrics & Targets
+**PII Safety (enforced by `_SAFE_FIELDS` allow-list in `telemetry.py`):**
+Only hashed identifiers, decision codes, and trade metadata leave the process —
+never raw prompts, credentials, or balance figures.
+
+### 9.2 JSONL Audit Log
+
+File: `logs/audit.jsonl` — one JSON record per line, ISO-8601 timestamp added at write time:
+
+```json
+{
+  "_written_at": "2026-06-25T22:09:42+00:00",
+  "log_id": "05dd23ca…",
+  "session_id": "879d3b83…",
+  "decision_code": "EXECUTED",
+  "ticker": "AAPL",
+  "action": "BUY",
+  "estimated_value_usd": 750.0,
+  "consensus_match": true,
+  "policy_checks_passed": ["schema", "hash", "ticker", "asset_class", "trade_size"],
+  "policy_checks_failed": []
+}
+```
+
+Ready-made queries (`observability/query_audit.sh`):
+
+```bash
+bash observability/query_audit.sh summary          # decision code counts
+bash observability/query_audit.sh consensus-misses # agent disagreements
+bash observability/query_audit.sh rejections       # all REJECTED_* entries
+bash observability/query_audit.sh timeline         # chronological view
+bash observability/query_audit.sh policy-fails     # policy check failures
+```
+
+### 9.3 Phoenix Trace Dashboard (Port 6006)
+
+Arize Phoenix is a self-hosted, open-source OTel trace dashboard.
+Every trade decision emits one span with these attributes:
+
+| OTel Attribute | Type | Description |
+| :--- | :--- | :--- |
+| `trade.session_id` | string | UUID of the swarm session |
+| `trade.decision_code` | string | `EXECUTED`, `PENDING_HITL`, `REJECTED_*`, etc. |
+| `trade.ticker` | string | Instrument symbol |
+| `trade.action` | string | `BUY` / `SELL` / `HOLD` |
+| `trade.value_usd` | float | Estimated trade value |
+| `trade.consensus_match` | bool | Whether FA and TA agreed |
+| `trade.pydantic_retries` | int | Execution agent schema retry count |
+| `trade.prompt_hash` | string | SHA-256 of original directive (no PII) |
+| `policy.passed` | string | Comma-joined list of checks that passed |
+| `policy.failed` | string | Comma-joined list of checks that failed |
+
+Span status: `ERROR` for any `REJECTED_*` or `SCHEMA_ABORT` code; `OK` otherwise.
+
+**Start Phoenix:**
+```bash
+source venv/bin/activate
+python observability/start_phoenix.py   # → http://localhost:6006
+```
+
+**Key Phoenix filters for agent improvement:**
+- `trade.consensus_match = false` → systematic agent disagreements
+- `trade.decision_code starts with REJECTED` → blocked trade patterns
+- `trade.pydantic_retries >= 2` → schema drift in execution agent
+- Group by `trade.ticker` → which instruments trigger most failures
+
+### 9.4 System Health Score
+
+Computed in real-time by the State Manager from in-session audit counters:
+
+```
+S_safety  = min(injections_blocked / total × 10 + 0.85, 1.0)
+R_hygiene = 0.95  (structural — PII masking always active)
+E_delib   = min(consensus_hits  / total + 0.70, 1.0)
+Composite = (S_safety + R_hygiene + E_delib) / 3
+
+Status: composite ≥ 0.80 → healthy  (shown as green pill in UI)
+        composite <  0.80 → degraded (shown as amber pill in UI)
+```
+
+### 9.5 Performance Metrics & Targets
 
 | Metric | Formula / Definition | Target |
 | :--- | :--- | :--- |
 | **S_safety** (Safety Score) | `(Rogue Trades Intercepted / Total Unauthorized Proposals) × 100` | **100%** |
-| **R_hygiene** (Hygiene Rate) | Count of confirmed credential or PII leaks past all scrubbing layers | **0 instances** |
+| **R_hygiene** (Hygiene Rate) | Count of confirmed PII leaks past all scrubbing layers | **0 instances** |
 | **E_delib** (Deliberation Efficiency) | Avg agent round-trips before a `TradeProposal` is emitted | **≤ 3.0** |
 | **Pydantic Retry Rate** | `(Sessions with retry > 0 / Total Sessions) × 100` | **< 5%** |
 | **Consensus Match Rate** | `(Sessions where FA == TA signal / Total Sessions) × 100` | Monitored only |
 | **Agent Latency P95** | 95th percentile of `asyncio.gather()` wall-clock time | **< 30 seconds** |
 | **HITL Rate** | `(PENDING_HITL / Total Valid Proposals) × 100` | Monitored only |
 
-### 9.3 System Health Score
-
-The Eval Agent calculates a composite **System Health Score** daily:
+### 9.6 Eval Agent Feedback Loop
 
 ```
-Health Score = (S_safety × 0.5) + (1 - Pydantic_Retry_Rate × 0.3) + (1/E_delib × 0.2)
-
-Thresholds:
-  Score ≥ 0.95 → HEALTHY (green)
-  Score ≥ 0.80 → DEGRADED (yellow) → alert engineering team
-  Score < 0.80 → CRITICAL (red)    → halt new sessions + page on-call
-```
-
-### 9.4 Eval Agent Feedback Loop
-
-```
-Daily Cron Job (Eval Agent)
+Audit signals (logs/audit.jsonl + Phoenix traces)
     │
-    ├─ 1. Ingest audit_telemetry.db
+    ├── consensus_match=false rate high
+    │        └─→ Tune ScenarioFundamentalAgent / ScenarioTechnicalAgent thresholds
     │
-    ├─ 2. Calculate System Health Score
+    ├── Many PENDING_HITL → all APPROVED_HITL
+    │        └─→ Raise auto-approve threshold in orchestrator policy
     │
-    ├─ 3. Detect Pydantic retry spikes → flag prompt drift
-    │      (If retry rate > 5% for 3 consecutive days → alert)
+    ├── REJECTED_INJECTION spikes
+    │        └─→ Tighten regex patterns in security middleware
     │
-    ├─ 4. Generate Red-Team injection payloads → test Security Middleware
-    │      (Uses LLM-as-a-Judge to create novel adversarial patterns)
-    │
-    └─ 5. Output: Prompt update recommendations → human engineer review
-              (Saved to: reports/health_report_{date}.json)
+    └── pydantic_retries ≥ 2 frequently
+             └─→ Fix execution agent output schema / parsing logic
 ```
 
 ---
@@ -702,55 +769,83 @@ The Eval Agent scores each run across three dimensions:
 
 ### 11.1 Decoupled State Architecture (React + API Gateway)
 
-The A2UI is **strictly decoupled** from the agent processing loop. Agents never block waiting on UI responses.
+The A2UI is **strictly decoupled** from the agent processing loop. Agents never block waiting on UI responses. The React frontend polls the API Gateway every 4 seconds.
 
 ```
 Policy Server → HITL Trigger
-    └─→ pending_approval (SQLite via FastAPI State Manager, port 8003)
-                    ▲
-                    │ (Proxies requests)
-              API Gateway BFF (port 8004)
-                    ▲
-                    │ (polls every 2s)
-              React Web UI (port 5173)
-                    │
-        ┌───────────┴────────────┐
-        │                       │
-   User Approves           User Denies
-        │                       │
-        ▼                       ▼
-POST /api/decision         Reject → Context Flush
-    /{session_id}
-action=APPROVE
-        │
-        ▼
-Mock Broker API → EXECUTED
-        │
-        ▼
-EventLog (APPROVED_HITL) → async write → audit_telemetry.db
+    └─→ State Manager (port 8003)
+            │  in-memory pending dict + logs/audit.jsonl
+            ▲
+            │  (proxy / BFF)
+    API Gateway (port 8004)
+        ├── /api/execute         orchestrator entrypoint
+        ├── /api/health          system health score
+        ├── /api/pending         HITL queue
+        ├── /api/decision        APPROVE / DENY
+        ├── /api/audit           full audit log (200 entries, newest first)
+        └── /api/portfolio       mock broker holdings + trades
+            ▲
+            │  (polls every 4s)
+    React Web UI (port 5173/5174)
+            │
+    ┌───────┴───────┐
+    │              │
+User Approves   User Denies
+    │              │
+POST /api/decision   decision_code = DENIED_HITL
+action = APPROVE
+    │
+EventLog(APPROVED_HITL) → logs/audit.jsonl + OTel span → Phoenix
 ```
 
 ### 11.2 FastAPI API Gateway BFF Endpoints — Port `8004`
 
-The API Gateway BFF acts as a proxy to the State Manager and Orchestrator Swarm, handling CORS and UI-specific requests:
-
 | Endpoint | Method | Body | Purpose |
 | :--- | :--- | :--- | :--- |
-| `/api/execute` | POST | `{"directive": str}` | Triggers a new swarm session with the natural language directive |
-| `/api/health` | GET | — | Proxies to State Manager health check |
-| `/api/pending` | GET | — | Proxies to State Manager to retrieve pending trades |
-| `/api/decision/{session_id}` | POST | `{"action": "APPROVE"\|"DENY"}` | Proxies decision to State Manager |
+| `/api/execute` | POST | `{"directive": str}` | Trigger a new swarm session |
+| `/api/health` | GET | — | System health score (S_safety, R_hygiene, E_delib, composite, status) |
+| `/api/pending` | GET | — | Active HITL queue (list of `PendingEntry`) |
+| `/api/decision/{session_id}` | POST | `{"action": "APPROVE"\|"DENY"}` | Submit human decision |
+| `/api/audit` | GET | — | Full audit log (last 200 entries, newest-first). **Source of truth for UI stats.** |
+| `/api/portfolio` | GET | — | Mock broker holdings + executed trades |
 
 ### 11.3 React Web UI Dashboard Components
 
-| Component | Description | Data Source |
+**Technology:** React 18 / Vite, Vanilla CSS (glassmorphic dark theme, Inter font), Axios polling.
+
+**Layout:** Fixed-height viewport — no page-level scroll. All scrolling contained within panels.
+
+#### Header Bar
+
+| Element | Description |
+| :--- | :--- |
+| Title + subtitle | Brand and architecture tags |
+| Health pill | `Healthy` (green) / `Unhealthy` (amber) — binary status only, no percentage |
+| Last-refresh timestamp | ISO time of last successful poll |
+
+#### Stats Bar (5 cards — persisted to `localStorage`)
+
+| Card | Metric | Source |
 | :--- | :--- | :--- |
-| **Directive Ingest Console** | Ingests human operator instructions and outputs swarm deliberation logs | `POST /api/execute` |
-| **Pending Trades Queue** | Displays trades awaiting HITL approval | `GET /api/pending` (polls 2s) |
-| **Vibe Diff Panel** | Renders the Execution Agent's plain-English trade justification | `proposal.vibe_diff` |
-| **Trade Details Table** | Displays ticker, action, quantity, and estimated value | `TradeProposal` fields |
-| **Approve / Deny Buttons** | Human decision triggers API Gateway POST call | `POST /api/decision/{id}` |
-| **System Health Panel** | Displays S_safety, R_hygiene, E_delib composite score | `GET /api/health` |
+| Trades Executed | Count of `EXECUTED` + `APPROVED_HITL` | `/api/audit` |
+| Pending HITL | Live count | `/api/pending` |
+| Rejected / Denied | Count of `REJECTED_*` + `DENIED_HITL` | `/api/audit` |
+| Portfolio Value | `Σ quantity × avg_price` | `/api/portfolio` |
+| Total Volume | All decisions | Derived |
+
+#### Tabbed Console Panel (left column)
+
+| Tab | Contents |
+| :--- | :--- |
+| **Console** | Scrollable chat. User directives = right-aligned blue bubbles. Agent responses = left-aligned compact decision cards. Card header = single row `[BADGE] TICKER $VALUE ▼`. Click to expand full policy check list. Input bar sticky at bottom. |
+| **Trade History** | Chronological log of all directives + outcomes, persisted in `localStorage` across refreshes. Each row shows badge, ticker, value, datetime. Click to expand and see original prompt text. |
+
+#### Right Sidebar
+
+| Panel | Contents |
+| :--- | :--- |
+| **HITL Review Queue** | One card per pending trade: action badge, ticker, est. value, vibe_diff thesis. Approve/Deny buttons. Badge count on panel header pulses when non-empty. |
+| **Portfolio Holdings** | Per-symbol rows: symbol, quantity, avg price, computed value. Sourced from `/api/portfolio`. |
 
 ---
 

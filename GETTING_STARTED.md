@@ -115,6 +115,40 @@ zero-trust-trading-desk-mulit-agent/
 
 ## 4. Running the Services
 
+The system can be run either inside isolated Docker containers (recommended for production/full reproducibility) or natively on your localhost (recommended for fast iteration and local development).
+
+### Option A — Run via Docker Compose (Recommended)
+
+To build and start the entire multi-container environment (Market Data, Secure Broker, State Manager, API Gateway, and Web UI) with zero manual steps:
+
+```bash
+# Start all containers in the background
+docker compose up --build -d
+```
+
+Verify that all containers are healthy:
+```bash
+docker compose ps
+```
+
+Verify that unit tests and prompt injection containment checks pass inside the isolated container network:
+```bash
+# Run Golden Dataset unit tests
+docker compose exec api-gateway pytest tests/test_eval_pipeline.py -v
+
+# Run prompt injection checks
+docker compose exec api-gateway python tests/simulate_injection.py --verbose
+```
+
+To stop and clean up the containers:
+```bash
+docker compose down --volumes
+```
+
+---
+
+### Option B — Run Natively on Localhost
+
 The system has three independent FastAPI services. In production they run on separate ports. For local development, you can start them all at once.
 
 ### Service 1 — Market Data MCP Server
@@ -209,7 +243,13 @@ Expected output:
 50 passed, 1 warning in ~61s
 ```
 
-> ⚠️ The suite takes ~60 seconds. Two tests (GD-09 + test_agent_timeout) each include a real 30-second `asyncio.wait_for` to validate the hard timeout boundary. This is correct and expected.
+### Run the Backend Integration Test Suite
+
+This script spins up all 4 backend FastAPI services in background processes, polls them until healthy, runs direct HTTP integration test cases against the API Gateway BFF by passing prompt directives, checks if the returned decisions are correct, and then shuts down all processes cleanly.
+
+```bash
+python3 tests/run_integration_tests.py
+```
 
 ### Run a specific phase only
 
@@ -595,6 +635,9 @@ cd web-ui && npm run dev &
 
 # Full test suite
 PYTHONPATH=. pytest tests/ -v
+
+# E2E Backend Integration Test Suite
+python3 tests/run_integration_tests.py
 
 # Golden dataset only (CI/CD gate)
 PYTHONPATH=. pytest tests/test_eval_pipeline.py -v

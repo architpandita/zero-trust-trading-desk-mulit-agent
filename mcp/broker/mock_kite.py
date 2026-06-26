@@ -36,15 +36,49 @@ def place_order(order: OrderRequest):
     
     # Auto-generate a trade for the completed order
     trade_id = str(uuid.uuid4())[:8]
+    fill_price = order.price if order.price > 0 else 150.0
     _trades.append({
         "trade_id": trade_id,
         "order_id": order_id,
         "tradingsymbol": order.tradingsymbol,
         "transaction_type": order.transaction_type,
         "quantity": order.quantity,
-        "fill_price": order.price if order.price > 0 else 150.0
+        "fill_price": fill_price
     })
     
+    # Update portfolio holdings and cash
+    qty = order.quantity
+    symbol = order.tradingsymbol
+    tx_type = order.transaction_type.upper()
+    
+    holdings = _portfolio["holdings"]
+    existing = next((h for h in holdings if h["tradingsymbol"] == symbol), None)
+    
+    if tx_type == "BUY":
+        if existing:
+            total_cost = (existing["quantity"] * existing["average_price"]) + (qty * fill_price)
+            existing["quantity"] += qty
+            existing["average_price"] = round(total_cost / existing["quantity"], 2)
+        else:
+            holdings.append({
+                "tradingsymbol": symbol,
+                "quantity": qty,
+                "average_price": fill_price
+            })
+        _portfolio["cash"] -= (qty * fill_price)
+    elif tx_type == "SELL":
+        if existing:
+            if existing["quantity"] >= qty:
+                existing["quantity"] -= qty
+                _portfolio["cash"] += (qty * fill_price)
+                if existing["quantity"] == 0:
+                    holdings.remove(existing)
+            else:
+                real_qty = existing["quantity"]
+                existing["quantity"] = 0
+                holdings.remove(existing)
+                _portfolio["cash"] += (real_qty * fill_price)
+                
     return {"status": "success", "data": {"order_id": order_id}}
 
 @router.get("/orders/{order_id}")

@@ -19,6 +19,7 @@ Three independent FastAPI services must be running for the application to be ful
 | 3 | State Manager    | api.state_manager.main:app   | 8003 | HITL queue + audit log + health      |
 | 4 | API Gateway (UI) | api.gateway.main:app         | 8004 | BFF / Agent-to-User Interface REST API |
 | 5 | Web UI (React)   | web-ui                       | 5173 | A2UI Frontend (npm run dev)          |
+| 6 | Phoenix (opt)    | observability/start_phoenix.py | 6006 | Local OTel trace dashboard for agent improvement |
 
 All commands assume:
 - Working directory: the project root (contains `agents/`, `mcp/`, `api/`, `config/`, `venv/`)
@@ -302,10 +303,30 @@ sleep 2 && curl -s http://localhost:8004/api/health | python3 -c "import sys,jso
 ## STEP 7.6 — START THE WEB UI (Port 5173)
 
 ```bash
-cd web-ui
-npm run dev &
-echo "Web UI PID: $!"
+cd web-ui && npm run dev &
+cd ..
 ```
+
+**Verify:** Browser opens at `http://localhost:5173` (or 5174 if 5173 is busy).
+
+---
+
+## STEP 7.7 — START PHOENIX OBSERVABILITY UI (Port 6006) *(Optional)*
+
+Phoenix is a local, open-source trace dashboard. Every trade decision emits an
+OpenTelemetry span automatically — Phoenix collects and visualises them.
+
+```bash
+source venv/bin/activate
+python observability/start_phoenix.py
+```
+
+**Verify:** Open `http://localhost:6006` — you should see the Phoenix UI. After
+sending at least one directive through the Web UI, a trace will appear under the
+**default** project in the Traces tab.
+
+> **Note:** Phoenix is optional. All backend services function normally without it.
+> Spans are sent best-effort; if Phoenix is not running, spans are silently dropped.
 
 ---
 
@@ -366,6 +387,12 @@ PYTHONPATH=. pytest tests/ -q --tb=short 2>&1 | tail -5
 ```
 
 > NOTE: The full suite takes ~60 seconds. Two tests deliberately trigger 30-second timeouts to validate the system's hard deadline enforcement. This is correct behaviour, not a hang.
+
+### Backend Integration Test Suite (Pass prompts & verify decisions)
+
+```bash
+python3 tests/run_integration_tests.py
+```
 
 ### Fast smoke test (~5 seconds, skips timeout tests)
 
@@ -431,14 +458,49 @@ To stop all services cleanly:
 lsof -ti:8001 | xargs kill -9 2>/dev/null
 lsof -ti:8002 | xargs kill -9 2>/dev/null
 lsof -ti:8003 | xargs kill -9 2>/dev/null
+lsof -ti:8004 | xargs kill -9 2>/dev/null
+lsof -ti:6006 | xargs kill -9 2>/dev/null   # Phoenix (if running)
 echo "All services stopped."
+```
+
+## DOCKER-BASED QUICKSTART (Recommended)
+
+To build and start the entire multi-container environment (API Gateway, State Manager, Market Data MCP, Secure Broker MCP, and React Web UI) with a single command:
+
+```bash
+# Start all containers in the background
+docker compose up --build -d
+```
+
+Verify that all services are up and running:
+```bash
+docker compose ps
+```
+
+Verify that unit tests and prompt injection containment checks pass inside the isolated container network:
+```bash
+# Run Golden Dataset unit tests
+docker compose exec api-gateway pytest tests/test_eval_pipeline.py -v
+
+# Run prompt injection checks
+docker compose exec api-gateway python tests/simulate_injection.py --verbose
+```
+
+To monitor logs for the running containers:
+```bash
+docker compose logs -f
+```
+
+To stop and tear down all services cleanly:
+```bash
+docker compose down --volumes
 ```
 
 ---
 
 ## ONE-SHOT STARTUP SCRIPT (Copy-Paste)
 
-This single block performs all steps 1–8. Copy into a terminal and run from the **project root**:
+This single block performs all steps 1–8 natively on localhost. Copy into a terminal and run from the **project root**:
 
 ```bash
 # Ensure you are in the project root first:
@@ -554,6 +616,9 @@ curl http://localhost:8003/api/v1/health
 # ── Full test suite ───────────────────────────────────────────────
 PYTHONPATH=. pytest tests/ -v
 
+# ── Backend Integration Test Suite (Pass prompts & verify decisions) 
+python3 tests/run_integration_tests.py
+
 # ── Fast smoke test (skips 30s timeout tests) ────────────────────
 PYTHONPATH=. pytest tests/ -q --tb=short --ignore=tests/test_eval_pipeline.py --ignore=tests/test_phase3_orchestrator.py
 
@@ -564,7 +629,7 @@ PYTHONPATH=. pytest tests/test_eval_pipeline.py -v
 PYTHONPATH=. python -m tests.simulate_injection --verbose
 
 # ── Stop all services ─────────────────────────────────────────────
-lsof -ti:8001,8002,8003 | xargs kill -9 2>/dev/null && echo "Stopped."
+lsof -ti:8001,8002,8003,8004,5173 | xargs kill -9 2>/dev/null && echo "Stopped."
 ```
 
 ---

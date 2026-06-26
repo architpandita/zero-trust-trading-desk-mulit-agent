@@ -4,6 +4,10 @@ from mcp.market_data.hash_utils import generate_data_hash
 
 app = FastAPI()
 
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "mcp-market-data"}
+
 @app.get("/market_data/fetch_financials")
 def api_fetch_financials(ticker: str):
     data = fetch_financials(ticker)

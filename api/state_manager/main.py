@@ -2,7 +2,11 @@ from fastapi import FastAPI, HTTPException
 from api.state_manager.models import PendingEntry, HITLDecision, DecisionResponse, AuditEntry
 from api.state_manager.audit import push_audit, get_recent_audit, compute_health_score
 
+import os
+
 app = FastAPI(title="Zero-Trust State Manager", version="1.0.0")
+
+BROKER_MCP_URL = os.getenv("BROKER_MCP_URL", "http://localhost:8002")
 
 # In-process ephemeral store: session_id -> PendingEntry
 # Designed to be wiped on restart — no persistence of trade state.
@@ -36,6 +40,27 @@ def record_decision(session_id: str, decision: HITLDecision) -> DecisionResponse
 
     code = "APPROVED_HITL" if decision.action == "APPROVE" else "DENIED_HITL"
     entry = _pending.pop(session_id)
+
+    if decision.action == "APPROVE":
+        import httpx
+        try:
+            qty = entry.proposal_summary.get("quantity", 0)
+            val = entry.proposal_summary.get("estimated_value_usd", 0.0)
+            price = val / qty if qty > 0 else 150.0
+            with httpx.Client() as client:
+                client.post(
+                    f"{BROKER_MCP_URL}/kite/orders/regular",
+                    json={
+                        "tradingsymbol": entry.proposal_summary.get("ticker"),
+                        "transaction_type": entry.proposal_summary.get("action"),
+                        "quantity": qty,
+                        "price": price
+                    },
+                    timeout=5.0
+                )
+        except Exception:
+            pass
+
     push_audit({
         "session_id": session_id,
         "decision_code": code,
@@ -49,6 +74,13 @@ def record_decision(session_id: str, decision: HITLDecision) -> DecisionResponse
 def get_audit() -> list[dict]:
     """P4-B5: Return last 50 EventLog entries (no PII — hashes only)."""
     return get_recent_audit(50)
+
+
+@app.post("/api/v1/audit", status_code=201)
+def log_audit(entry: dict):
+    """Receive and record a telemetry audit event."""
+    push_audit(entry)
+    return {"status": "logged"}
 
 
 @app.get("/api/v1/health")

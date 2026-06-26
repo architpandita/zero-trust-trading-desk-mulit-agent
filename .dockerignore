@@ -1,0 +1,47 @@
+# ── Python artifacts ──────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Logs & data ───────────────────────────────────────────────────────────────
+logs/
+*.log
+data/
+
+# ── Git history ───────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Docs & plans (not needed at runtime) ─────────────────────────────────────
+README.md
+AGENT_RUNBOOK.md
+GETTING_STARTED.md
+DEMO_PROMPTS.md
+plan/
+skills/
+.agents/
+
+# ── Frontend (only needed by web-ui build which has its own context) ──────────
+web-ui/node_modules/
+web-ui/dist/
+web-ui/.gitignore
+
+# ── IDE & OS noise ────────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

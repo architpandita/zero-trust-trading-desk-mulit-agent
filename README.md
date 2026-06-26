@@ -4,43 +4,24 @@
 
 ---
 
-## The Story
+## ⚡ Quick Pitch
+AI agents fail, hallucinate, and are vulnerable to prompt injections. The **Zero-Trust Multi-Agent Trading Desk** is a defensive trading architecture designed to run untrusted AI swarms securely. By applying zero-trust network principles to LLMs, we strip agents of "ambient authority" (broker keys) and route every trade proposal through a deterministic, math-first Python **Policy Server** and **Human-in-the-Loop (HITL) Queue**. If the AI is jailbroken or goes rogue, the system fails closed.
 
-### Meet Priya
+## 📖 The Storyline
+Priya, a quant researcher, lost three months of gains when her firm's new AI assistant hallucinated and executed an unauthorized $47,000 buy order. The post-mortem revealed a critical design flaw: *ambient authority*. The AI held the API keys, believed its own hallucinations, and acted directly. Priya set out to rebuild the system from scratch with one core rule: **Treat AI agents like untrusted code in a sandboxed environment.**
 
-Priya is a quantitative researcher at a mid-sized asset management firm. Every morning at 6 AM, before the markets open, she fires up her laptop and reviews pre-market signals. She's smart, rigorous, and proud of her work.
+## 🎯 Key Assumptions
+1. **Agents Will Fail**: We assume LLM agents *will* hallucinate, err, or suffer adversarial prompt injections.
+2. **Zero Ambient Authority**: Agents must *never* hold API keys or trade credentials. They only output proposals.
+3. **Deterministic Enforcement**: Safety cannot be delegated to an LLM. Policy gates must be hard-coded, math-driven, and cryptographic.
+4. **Data Provenance**: Every piece of data used to make a trade decision must be cryptographically hashed and verified against the source.
 
-One Tuesday, her firm's new AI trading assistant — connected directly to their brokerage — hallucinated a buy signal for a stock it had never been trained on. The model was confidently wrong. Because the system had ambient authority (the keys were embedded in the agent's context), it executed a $47,000 market order before anyone could stop it.
-
-That mistake cost her team three months of gains. And their jobs.
-
----
-
-### The Question That Changed Everything
-
-Priya's CTO asked a deceptively simple question during the post-mortem:
-
-> **"Why did we trust the AI?"**
-
-Not why did the AI fail — AIs fail all the time. The question was: *why was the AI trusted with the power to act?*
-
-The team had built a system where:
-- The AI held the broker API keys
-- There was no independent verification of the AI's data
-- "I'm confident" was treated as "this is correct"
-- A single prompt injection could override months of policy
-
-Priya quit, started a small consultancy, and spent six months building the answer. The result is the **Zero-Trust Multi-Agent Trading Desk**.
-
----
-
-### The Answer: Trust Nobody. Verify Everything.
-
-The Zero-Trust Trading Desk is not an AI system that happens to have safety features. It is a **safety architecture** that happens to use AI.
-
-The core insight: **treat AI agents exactly like untrusted third-party code in a zero-trust network**. They can observe, compute, and propose. They cannot act.
-
-Every proposed trade — no matter how confident the AI — passes through a deterministic **Policy Server** written in pure Python. The Policy Server has no LLM. It cannot be prompted, jailbroken, or confused. It reads a YAML config file and enforces hard mathematical limits. If the AI's data doesn't match the cryptographic hash of the source, the trade is dead. No exceptions.
+## 🚀 What to Expect
+- **Specialized Multi-Agent Swarm**: A collaborative crew of Fundamental, Technical, and Execution agents working in a bounded context.
+- **Fail-Closed Consensus**: Deterministic consensus matching ensuring trades are blocked if agents disagree.
+- **Human-in-the-Loop Triggers**: Automatic routing of trades over $1,000.00 or with sentiment conflict to a queue for approval/denial.
+- **Crypto Data Integrity**: SHA256 hashing to verify that execution parameters match market data fetched at the start of the session.
+- **Sleek Reactive UI**: A modern dashboard showing real-time console messages, a pending HITL review queue, trade history, and masked portfolio stats that persist across page reloads.
 
 ---
 

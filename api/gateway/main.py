@@ -4,6 +4,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import os
+
+BROKER_MCP_URL = os.getenv("BROKER_MCP_URL", "http://localhost:8002")
+
 from agents.orchestrator import orchestrator as orch
 from agents.eval.scenario_agents import (
     ScenarioFundamentalAgent,
@@ -22,7 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STATE_MANAGER_URL = "http://localhost:8003"
+STATE_MANAGER_URL = os.getenv("STATE_MANAGER_URL", "http://localhost:8003")
 
 @app.on_event("startup")
 async def startup_event():
@@ -83,3 +87,30 @@ async def post_decision(session_id: str, decision: DecisionRequest):
             raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"State Manager unreachable: {str(e)}")
+
+
+@app.get("/api/audit")
+async def get_audit():
+    """Proxies the audit log from the State Manager (last 100 entries)."""
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(f"{STATE_MANAGER_URL}/api/v1/audit", timeout=5.0)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"State Manager unreachable: {str(e)}")
+
+
+@app.get("/api/portfolio")
+async def get_portfolio():
+    """Proxies portfolio holdings and trades from the mock broker."""
+    async with httpx.AsyncClient() as client:
+        try:
+            holdings_resp = await client.get(f"{BROKER_MCP_URL}/kite/portfolio/holdings", timeout=5.0)
+            trades_resp = await client.get(f"{BROKER_MCP_URL}/kite/trades", timeout=5.0)
+            holdings = holdings_resp.json().get("data", []) if holdings_resp.status_code == 200 else []
+            trades = trades_resp.json().get("data", []) if trades_resp.status_code == 200 else []
+            return {"holdings": holdings, "trades": trades}
+        except Exception as e:
+            # Return empty portfolio gracefully so UI doesn't crash
+            return {"holdings": [], "trades": [], "error": str(e)}

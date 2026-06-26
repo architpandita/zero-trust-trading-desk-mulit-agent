@@ -1,0 +1,109 @@
+services:
+  mcp-market-data:
+    build:
+      context: .
+      dockerfile: mcp/market_data/Dockerfile
+    container_name: mcp-market-data
+    ports:
+      - "8001:8001"
+    networks:
+      - agent_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  mcp-broker:
+    build:
+      context: .
+      dockerfile: mcp/broker/Dockerfile
+    container_name: mcp-broker
+    ports:
+      - "8002:8002"
+    networks:
+      - agent_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  state-manager:
+    build:
+      context: .
+      dockerfile: api/state_manager/Dockerfile
+    container_name: state-manager
+    ports:
+      - "8003:8003"
+    environment:
+      - BROKER_MCP_URL=http://mcp-broker:8002
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - agent_net
+      - ui_net
+    restart: unless-stopped
+    depends_on:
+      mcp-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api/gateway/Dockerfile
+    container_name: api-gateway
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "8004:8004"
+    environment:
+      - BROKER_MCP_URL=http://mcp-broker:8002
+      - STATE_MANAGER_URL=http://state-manager:8003
+    depends_on:
+      state-manager:
+        condition: service_healthy
+      mcp-market-data:
+        condition: service_healthy
+      mcp-broker:
+        condition: service_healthy
+    networks:
+      - agent_net
+      - ui_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web-ui:
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile
+    container_name: web-ui
+    ports:
+      - "5173:5173"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - ui_net
+    restart: unless-stopped
+
+networks:
+  agent_net:
+    internal: true
+  ui_net:

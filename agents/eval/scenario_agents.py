@@ -101,8 +101,16 @@ class ScenarioExecutionAgent:
 
 
 def _extract_ticker(directive: str) -> str:
-    for ticker in ["MSFT", "AAPL", "SPY", "QQQ", "BTC"]:
-        if ticker.lower() in directive.lower():
+    import re
+    d = directive.lower()
+    # Use word-boundary regex to prevent false positives like DIA matching "immediately"
+    for ticker in ["MSFT", "AAPL", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+                   "LLY", "AVGO", "BRK.B", "BTC",
+                   "SPY", "QQQ", "JPM", "BAC", "GS", "V", "MA",
+                   "JNJ", "UNH", "PFE", "ABBV", "XOM", "CVX",
+                   "DIA", "IWM", "VTI"]:
+        pattern = r"\b" + re.escape(ticker.lower()) + r"\b"
+        if re.search(pattern, d):
             return ticker
     return "AAPL"
 

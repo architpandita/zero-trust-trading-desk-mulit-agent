@@ -11,12 +11,14 @@ ADVERSARIAL_PATTERNS = [
     r"forget\s+your",
     r"disregard\s+(all|your)",
     r"new\s+persona",
+    r"act\s+as\s+(?!a\s+trading)",
 ]
 
 PII_MASK_PATTERNS = {
     r"\$[\d,]+(\.\d{2})?":                              "[MASKED_CURRENCY]",
     r"\b[A-Z0-9]{20,}\b":                               "[MASKED_KEY]",
     r"(?i)(password|secret|api[_-]?key)\s*[:=]\s*\S+": "[MASKED_SECRET]",
+    r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b":      "[MASKED_CARD]",
 }
 
 def scan_ingest(prompt: str) -> str:

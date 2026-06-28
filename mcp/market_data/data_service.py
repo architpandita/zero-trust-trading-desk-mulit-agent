@@ -3,8 +3,8 @@ from fastapi import HTTPException
 ALLOWED_TICKERS = [
     # Original
     "AAPL", "MSFT", "SPY", "QQQ",
-    # Big Tech
-    "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+    # Big Tech / Top 10 US Stocks
+    "GOOGL", "AMZN", "NVDA", "META", "TSLA", "LLY", "AVGO", "BRK.B",
     # Finance
     "JPM", "BAC", "GS", "V", "MA",
     # Healthcare
@@ -26,6 +26,9 @@ _FINANCIALS = {
     "NVDA":  {"pe_ratio": 55.3,  "market_cap": 2_700_000_000_000},
     "META":  {"pe_ratio": 23.6,  "market_cap": 1_200_000_000_000},
     "TSLA":  {"pe_ratio": 60.8,  "market_cap": 800_000_000_000},
+    "LLY":   {"pe_ratio": 115.2, "market_cap": 790_000_000_000},
+    "AVGO":  {"pe_ratio": 68.4,  "market_cap": 650_000_000_000},
+    "BRK.B": {"pe_ratio": 20.3,  "market_cap": 890_000_000_000},
     "JPM":   {"pe_ratio": 12.4,  "market_cap": 580_000_000_000},
     "BAC":   {"pe_ratio": 11.9,  "market_cap": 310_000_000_000},
     "GS":    {"pe_ratio": 13.2,  "market_cap": 145_000_000_000},
@@ -53,6 +56,9 @@ _CANDLES = {
     "NVDA":  {"close": 131.20, "volume": 200_000_000},
     "META":  {"close": 574.60, "volume": 18_000_000},
     "TSLA":  {"close": 248.90, "volume": 90_000_000},
+    "LLY":   {"close": 812.40, "volume": 3_500_000},
+    "AVGO":  {"close": 185.30, "volume": 14_000_000},
+    "BRK.B": {"close": 441.20, "volume": 4_800_000},
     "JPM":   {"close": 218.40, "volume": 12_000_000},
     "BAC":   {"close": 43.20,  "volume": 40_000_000},
     "GS":    {"close": 495.10, "volume": 3_000_000},

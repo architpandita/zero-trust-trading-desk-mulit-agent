@@ -14,10 +14,38 @@ global_risk_mandate:
 
 asset_universe:
   allowed_tickers:
+    # Original core universe
     - "AAPL"
     - "MSFT"
     - "SPY"
     - "QQQ"
+    # Top 10 US Stocks by Market Cap
+    - "NVDA"
+    - "GOOGL"
+    - "AMZN"
+    - "META"
+    - "TSLA"
+    - "LLY"
+    - "AVGO"
+    - "BRK.B"
+    # Finance
+    - "JPM"
+    - "BAC"
+    - "GS"
+    - "V"
+    - "MA"
+    # Healthcare
+    - "JNJ"
+    - "UNH"
+    - "PFE"
+    - "ABBV"
+    # Energy
+    - "XOM"
+    - "CVX"
+    # Broad Market ETFs
+    - "DIA"
+    - "IWM"
+    - "VTI"
   restricted_asset_classes:
     - "CRYPTO"
     - "PENNY_STOCKS"
